@@ -1,0 +1,689 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{python}
+import skimage.io as sio
+from skimage.color import rgb2gray
+from skimage import feature
+from skimage import filters
+from skimage import segmentation
+import numpy as np
+from sklearn.cluster import KMeans
+import math
+import matplotlib.pyplot as plt
+```
+
+```{python}
+def image_kmeans(im,n_clusters):
+    imVector = im.reshape(-1,1)
+    imKMeans = KMeans(n_clusters = n_clusters, random_state = 11172020).fit(imVector)
+    imLabeled = imKMeans.predict(imVector)
+    mu = np.zeros(n_clusters)
+    sigma = np.zeros(n_clusters)
+    for label in range(0,n_clusters):
+        imSubset = imVector[imLabeled == label]
+        mu[label] = np.mean(imSubset)
+        sigma[label] = np.std(imSubset)
+    imLabeled = imLabeled.reshape(im.shape)
+    return [imLabeled,mu,sigma]
+```
+
+```{python}
+def ind2ij(ind,imHeight):
+    i = (ind-1) % imHeight
+    j = math.floor((ind-1)/imHeight)
+    return [i,j]
+```
+
+```{python}
+def MRF_MAP(labeledImage,originalImage,labelMeans,labelSDs,n_clusters,MAP_iter,imageEdges = None,show_plot = True):
+    if imageEdges is None:
+        imageEdges = originalImage*0
+    m,n = originalImage.shape
+    labeledVector = labeledImage.reshape(-1,1)
+    originalVector = originalImage.reshape(-1,1)
+    #Each pixel has an energy associated with each class label
+    energy = np.zeros(shape = (m*n,n_clusters))
+    #Desire class label that minimize posterior energy (will sum over all
+    #elements of the energy vector initialized above)
+    energySequence = np.zeros(shape = MAP_iter)
+    for mapIter in range(0,MAP_iter):
+        # print('   MAP iteration',mapIter)
+        #Each pixel is assumed to have an associated observable field, y | x,
+        #and hidden field, x. We calculate the associated "energies" (sum of log
+        #densities) separately for y | x and x.
+        observedFieldEnergy = np.zeros(shape = (m*n,n_clusters))
+        hiddenFieldEnergy = np.zeros(shape = (m*n,n_clusters))
+        for ind in range(0,n_clusters) :
+            #For each class label, each observed value y | x contributes to the
+            #energy. The assumed form is Gaussian, so the following just
+            #calculates each obs' contribution
+            obsEnergy = np.square(originalVector - labelMeans[ind])
+            # print((2*labelSDs[ind]**2))
+            obsEnergy = obsEnergy/(2*labelSDs[ind]**2)
+            obsEnergy = obsEnergy + math.log(labelSDs[ind])
+            #observedFieldEnergy[:,ind] is (nm) x 0 array while obsEnergy is
+            #(nm) x 1 array, so flattening makes dimensions agree
+            observedFieldEnergy[:,ind] = observedFieldEnergy[:,ind] + np.ndarray.flatten(obsEnergy)
+            #The distribution of the hidden field is assumed to have a Gibbsian
+            #form with a neighborhood-based energy function This energy
+            #function, U, is the sum of "clique potentials" V defined for two
+            #neighboring pixels (specifically their class labels, xi an xj) as V
+            #= I(xi != xj)/2 That is, the energy increases when two neighboring
+            #pixels do not share a class label (goal is to minimize energy)
+            for px in range(0,(m*n)):
+                i,j = ind2ij(px,m)
+                hiddenEnergy = 0
+                #these if statements essentially just determine if not on the
+                #boarder of the image or neighboring an edge point (where
+                #imageEdges[i,j] = 1 if pixel i,j is on an edge) if we're not on
+                #such pixels, then determine if the energy should increase
+                #locally around the pixel
+                if (i-1) >= 0:
+                    if imageEdges[i-1,j] == 0:
+                        hiddenEnergy = hiddenEnergy + (ind != labeledImage[i-1,j])/2
+                if (i+1) <= (m-1):
+                    if imageEdges[i+1,j] == 0:
+                        hiddenEnergy = hiddenEnergy + (ind != labeledImage[i+1,j])/2
+                if (j-1) >= 1:
+                    if imageEdges[i,j-1] == 0:
+                        hiddenEnergy = hiddenEnergy + (ind != labeledImage[i,j-1])/2
+                if (j+1) <= (n-1):
+                    if imageEdges[i,j+1] == 0:
+                        hiddenEnergy = hiddenEnergy + (ind != labeledImage[i,j+1])/2
+                hiddenFieldEnergy[px,ind] = hiddenEnergy
+            energy = observedFieldEnergy + hiddenFieldEnergy
+            #we will assign a pixel the class label with the smallest energy
+            labeledVector = np.argmin(energy,axis = 1)
+            labeledImage = labeledVector.reshape(originalImage.shape)
+            #convergence criteria for MAP estimation (std dev of energy from
+            #past few iterations is small relative to current iteration's
+            #energy)
+            minEnergyPerPixel = np.min(energy,axis = 1)
+            energySequence[mapIter] = np.sum(minEnergyPerPixel)
+            if mapIter >= 2:
+                if np.abs(energySequence[mapIter - 1] - energySequence[mapIter]) < .0001:
+                # if np.divide(np.std(energySequence[(mapIter-2):mapIter]),energySequence[mapIter]) < .00001:
+                    break
+    #After completing enough MAP estimation iterations, take labels from last
+    #iteration
+    posteriorEnergy = 0
+    for px in range(0,(m*n)):
+        posteriorEnergy = posteriorEnergy + energy[px,labeledVector[px]]
+    if show_plot:
+        plot(energySequence)
+    return [labeledImage,posteriorEnergy]
+```
+
+```{python}
+def HMRF_EM(labeledImage,originalImage,labelMeans,labelSDs,n_clusters,EM_iter,MAP_iter,imageEdges = None):
+    if imageEdges is None:
+        imageEdges = labeledImage*0
+    m,n = originalImage.shape
+    imVector = originalImage.reshape(-1,1)
+    #Probability of class membership per pixel
+    classProbs = np.zeros(shape = (n_clusters,m*n))
+    #keep track of if energy is approaching minimum/stability
+    energySequence = np.zeros(shape = EM_iter)
+    for emIter in range(0,EM_iter):
+        # print('\n EM iteration',emIter,'\n')
+        #Update class labels
+        labeledImage, energySequence[emIter] = MRF_MAP(labeledImage,originalImage,labelMeans,labelSDs,n_clusters,MAP_iter,imageEdges = imageEdges,show_plot=False)
+        labelVector = labeledImage.reshape(-1,1)
+        #Update class probabilities based on last M-step estimates
+        for ind in range(0,n_clusters):
+            obsLikelihood = 1/math.sqrt(2*math.pi*labelSDs[ind]**2)
+            obsLikelihood = obsLikelihood*np.exp((-1/(2*labelSDs[ind]**2))*np.square(imVector - labelMeans[ind]))
+            hiddenLogLikelihood = np.zeros(shape = obsLikelihood.shape)
+            for px in range(0,(m*n)):
+                i,j = ind2ij(px,m)
+                hiddenEnergy = 0
+                #these if statements essentially just determine if not on the
+                #boarder of the image or neighboring an edge point (where
+                #imageEdges[i,j] = 1 if pixel i,j is on an edge) if we're not on
+                #such pixels, then determine if the energy should increase
+                #locally around the pixel
+                if (i-1) >= 0:
+                    if imageEdges[i-1,j] == 0:
+                        hiddenEnergy = hiddenEnergy + (ind != labeledImage[i-1,j])/2
+                if (i+1) <= (m-1):
+                    if imageEdges[i+1,j] == 0:
+                        hiddenEnergy = hiddenEnergy + (ind != labeledImage[i+1,j])/2
+                if (j-1) >= 1:
+                    if imageEdges[i,j-1] == 0:
+                        hiddenEnergy = hiddenEnergy + (ind != labeledImage[i,j-1])/2
+                if (j+1) <= (n-1):
+                    if imageEdges[i,j+1] == 0:
+                        hiddenEnergy = hiddenEnergy + (ind != labeledImage[i,j+1])/2
+                hiddenLogLikelihood[px] = hiddenEnergy
+            classProbs[ind,:] = np.ndarray.flatten(np.multiply(obsLikelihood,np.exp(-hiddenLogLikelihood)))
+        normConstant = np.sum(classProbs,axis = 0,keepdims=True)
+        classProbs = np.divide(classProbs,normConstant)
+        # M-step:
+        for ind in range(0,n_clusters):
+            labelMeans[ind] = np.inner(classProbs[ind,:],np.ndarray.flatten(imVector))
+            labelMeans[ind] = np.divide(labelMeans[ind],np.sum(classProbs[ind,:]))
+            labelSDs[ind] = np.inner(classProbs[ind,:],np.ndarray.flatten(np.square(imVector - labelMeans[ind])))
+            labelSDs[ind] = np.divide(labelSDs[ind],np.sum(classProbs[ind,:]))
+            labelSDs[ind] = np.sqrt(labelSDs[ind])
+        if emIter >= 2:
+            if np.abs(energySequence[emIter - 1] - energySequence[emIter]) < .0001:
+            # if np.divide(np.std(energySequence[(emIter-2):emIter]),energySequence[emIter]) < .0000001:
+                break
+    return [labeledImage,labelMeans,labelSDs,classProbs]
+```
+
+```{python}
+def HMRF_full(im,sigma,n_clusters,EM_iter,MAP_iter):
+  imBlurred = im
+  # imBlurred = filters.gaussian(im,sigma =  sigma)
+  imInits,initM,initSDs = image_kmeans(imBlurred,n_clusters=n_clusters)
+  imFinal, finalM, finalSDs,classProbs = HMRF_EM(imInits,imBlurred,initM,initSDs,n_clusters = n_clusters,EM_iter=EM_iter,MAP_iter=MAP_iter,imageEdges=np.zeros(shape = imInits.shape))
+  # HMRF_EM(imInits,imBlurred,initM,initSDs,n_clusters = n_clusters,EM_iter=EM_iter,MAP_iter=MAP_iter,imageEdges=np.zeros(shape = imInits.shape))
+  return(imFinal,finalM,finalSDs,classProbs)
+```
+
+```{r}
+library(mrf2d)
+library(tidyverse)
+library(reticulate)
+```
+
+```{r}
+predictAccuracy <- purrr::map_dfr(purrr::cross(.l = list("n_clust" = c(2L,3L,4L),"sd" = c(.1,.5,1))),
+                                  function(params){
+                                    
+                                    purrr::map_dfr(1:100,
+                                                   ~ {
+                                                     th <- expand_array(-1, family = "onepar", mrfi(1), C = params$n_clust - 1)
+                                                     
+                                                     z_sample <- rmrf2d(init_Z = c(100,100), mrfi = mrfi(1), theta = th)
+                                                     z_distorted <- z_sample + rnorm(100^2,sd = params$sd)
+                                                     
+                                                     # warningMessage <- py_capture_output(py$HMRF_full(im = z_distorted,sigma = 3L,n_clusters = params$n_clust,EM_iter = 10L,MAP_iter = 10L))
+                                                     # 
+                                                     # if(stringr::str_detect(warningMessage,"RuntimeWarning")){
+                                                     #   pyEstimate <- NA
+                                                     #   pyMCR <- NA
+                                                     # }
+                                                     # else{
+                                                     pyFit <- py$HMRF_full(im = z_distorted,sigma = 3L,n_clusters = params$n_clust,EM_iter = 10L,MAP_iter = 10L)
+                                                     
+                                                     # Determine estimated image based on highest class probabilities
+                                                     pyEstimate <- pyFit[[4]] %>%
+                                                       t() %>%
+                                                       as.data.frame() %>%
+                                                       rename_all(~ as.character(sort.list(order(pyFit[[2]])) - 1)) %>%
+                                                       mutate(pixel = 1:nrow(.)) %>%
+                                                       pivot_longer(cols = !starts_with("pixel"),
+                                                                    names_to = "classif",
+                                                                    values_to = "prob") %>%
+                                                       group_by(pixel) %>%
+                                                       filter(prob == max(prob)) %>%
+                                                       pull(classif) %>%
+                                                       matrix(nrow = 100,ncol = 100) %>%
+                                                       t() 
+                                                     
+                                                     pyMCR <- sum(as.vector(pyEstimate != z_sample))/10000
+                                                     # }
+                                                     
+                                                     mrf2dFit <- mrf2d::fit_ghm(Y = z_distorted,mrfi = mrfi(1),theta = th,equal_vars = TRUE,verbose = FALSE)
+                                                     
+                                                     pyMCR <- sum(as.vector(pyEstimate != z_sample))/10000
+                                                     mrfMCR <- sum(as.vector(mrf2dFit$Z_pred != z_sample))/10000
+                                                     
+                                                     tibble::tibble(n_clust = params$n_clust,
+                                                                    sd = params$sd,
+                                                                    # truth = list(z_sample),
+                                                                    # distorted = list(z_distorted),
+                                                                    # pyEstimate = list(pyEstimate),
+                                                                    # mrfFit = list(mrf2dFit$Z_pred),
+                                                                    pyMCR = pyMCR,
+                                                                    mrfMCR = mrfMCR)
+                                                   })
+                                    
+                                  })
+```
+
+```{r}
+predictAccuracy %>%
+  group_by(n_clust,sd) %>%
+  summarise(pyMCR = mean(pyMCR),
+            mrfMCR = mean(mrfMCR))
+
+
+```
+
+```{r}
+predictAccuracy_8neighbors_moreClasses <- purrr::map_dfr(purrr::cross(.l = list("n_clust" = c(3L,4L),#c(2L,3L,4L),
+                                                                    "sd" = c(.1))),#,.5,1))),
+                                             function(params){
+                                               
+                                               purrr::map_dfr(1:100,
+                                                              ~ {
+                                                                th <- expand_array(-1, family = "onepar", mrfi(1,norm_type = "m"), C = params$n_clust - 1)
+                                                                
+                                                                z_sample <- rmrf2d(init_Z = c(100,100), mrfi = mrfi(1,norm_type = "m"), theta = th)
+                                                                z_distorted <- z_sample + rnorm(100^2,sd = params$sd)
+                                                                
+                                                                # warningMessage <- py_capture_output(py$HMRF_full(im = z_distorted,sigma = 3L,n_clusters = params$n_clust,EM_iter = 10L,MAP_iter = 10L))
+                                                                # 
+                                                                # if(stringr::str_detect(warningMessage,"RuntimeWarning")){
+                                                                #   pyEstimate <- NA
+                                                                #   pyMCR <- NA
+                                                                # }
+                                                                # else{
+                                                                # pyFit <- py$HMRF_full(im = z_distorted,sigma = 3L,n_clusters = params$n_clust,EM_iter = 10L,MAP_iter = 10L)
+                                                                
+                                                                # Determine estimated image based on highest class probabilities
+                                                                # pyEstimate <- pyFit[[4]] %>%
+                                                                #   t() %>%
+                                                                #   as.data.frame() %>%
+                                                                #   rename_all(~ as.character(sort.list(order(pyFit[[2]])) - 1)) %>%
+                                                                #   mutate(pixel = 1:nrow(.)) %>%
+                                                                #   pivot_longer(cols = !starts_with("pixel"),
+                                                                #                names_to = "classif",
+                                                                #                values_to = "prob") %>%
+                                                                #   group_by(pixel) %>%
+                                                                #   filter(prob == max(prob)) %>%
+                                                                #   pull(classif) %>%
+                                                                #   matrix(nrow = 100,ncol = 100) %>%
+                                                                #   t() 
+                                                                # 
+                                                                # pyMCR <- sum(as.vector(pyEstimate != z_sample))/10000
+                                                                # }
+                                                                
+                                                                mrf2dFit <- mrf2d::fit_ghm(Y = z_distorted,mrfi = mrfi(1,norm_type = "m"),theta = th,equal_vars = TRUE,verbose = FALSE)
+                                                                
+                                                                # pyMCR <- sum(as.vector(pyEstimate != z_sample))/10000
+                                                                mrfMCR <- sum(as.vector(mrf2dFit$Z_pred != z_sample))/10000
+                                                                
+                                                                
+                                                                
+                                                                tibble::tibble(n_clust = params$n_clust,
+                                                                               sd = params$sd,
+                                                                               class0_mean = mrf2dFit$par[1,1],
+                                                                               class1_mean = mrf2dFit$par[2,1], 
+                                                                               class0_sd = mrf2dFit$par[1,2],
+                                                                               class1_sd = mrf2dFit$par[2,2],
+                                                                               truth = list(z_sample),
+                                                                               # distorted = list(z_distorted),
+                                                                               # pyEstimate = list(pyEstimate),
+                                                                               mrfFit = list(mrf2dFit$Z_pred),
+                                                                               # pyMCR = pyMCR,
+                                                                               mrfMCR = mrfMCR)
+                                                              })
+                                               
+                                             })
+```
+
+
+```{r}
+misClass_3classes_original <- predictAccuracy_8neighbors_moreClasses$truth[[1]] %>%
+  dplot() +
+  coord_fixed() +
+  ggtitle("3 Class Original") +
+  theme(title = element_text(size = 9))
+
+misClass_3classes_estimated <- predictAccuracy_8neighbors_moreClasses$mrfFit[[1]] %>%
+  dplot() +
+  coord_fixed() +
+  ggtitle("3 Class Estimated")+
+  theme(title = element_text(size = 9))
+
+misClass_4classes_original <- predictAccuracy_8neighbors_moreClasses %>%
+  arrange(desc(mrfMCR)) %>%
+  slice(1) %>%
+  pull(truth) %>%
+  .[[1]] %>%
+  dplot() +
+  coord_fixed() +
+  ggtitle("4 Class Original")+
+  theme(title = element_text(size = 9))
+
+misClass_4classes_estimated <- predictAccuracy_8neighbors_moreClasses %>%
+  arrange(desc(mrfMCR)) %>%
+  slice(1) %>%
+  pull(mrfFit) %>%
+  .[[1]] %>%
+  dplot() +
+  coord_fixed() +
+  ggtitle("4 Class Estimated")+
+  theme(title = element_text(size = 9))
+
+randSlice <- sample(1:nrow(predictAccuracy_8neighbors_moreClasses))
+
+goodClass_original <- predictAccuracy_8neighbors_moreClasses %>%
+  arrange(mrfMCR) %>%
+  filter(n_clust == 4) %>%
+  slice(randSlice) %>%
+  pull(truth) %>%
+  .[[1]] %>%
+  dplot() +
+  coord_fixed()
+
+goodClass_estimated <- predictAccuracy_8neighbors_moreClasses %>%
+  arrange(mrfMCR) %>%
+  filter(n_clust == 4) %>%
+  slice(randSlice) %>%
+  pull(mrfFit) %>%
+  .[[1]] %>%
+  dplot() +
+  coord_fixed()
+
+cowplot::plot_grid(misClass_3classes_original,misClass_3classes_estimated,
+                   misClass_4classes_original,misClass_4classes_estimated,
+                   # goodClass_original,goodClass_estimated,
+                   ncol = 2)
+
+predictAccuracy_8neighbors %>%
+  group_by(n_clust,sd) %>%
+  summarise(mrfMCR = mean(mrfMCR))
+```
+
+```{r}
+largeScaleTexture <- purrr::map_dfr(1:20,
+                                function(imNum){
+                                  im <- imager::load.image(paste0("~/HMRF-EM-image/images/Grayscale [normal] CL data/tm",imNum,"_1_1.png")) %>%
+                                    as.matrix()
+                                  
+                                  im_gt <- imager::load.image(paste0("~/HMRF-EM-image/images/Grayscale [normal] CL data/gt",imNum,"_1.png")) %>%
+                                    as.matrix()
+                                  
+                                  classLabels <- unique(as.vector(im_gt))
+                                  
+                                  im_gt[im_gt == 0] <- -1
+                                  
+                                  for(class in 1:length(classLabels)){
+                                    im_gt[im_gt == classLabels[class]] <- class - 1
+                                  }
+                                  
+                                  im_gt[im_gt == -1] <- 0
+                                  
+                                  th_4neighbor <- expand_array(-1, family = "onepar", mrfi(1), C = length(classLabels) - 1)
+                                  
+                                  mrf2d_4neighbor <- mrf2d::fit_ghm(Y = im,mrfi = mrfi(1),theta = th_4neighbor,equal_vars = TRUE,verbose = FALSE)
+                                  
+                                  classPred <- mrf2d_4neighbor$Z_pred
+                                  
+                                  mcr <- c()
+                                  
+                                  classPred_clone <- classPred
+                                  
+                                  for(iter in 1:length(classLabels)){
+                                    for(class in 1:length(classLabels)){
+                                      classPred_clone[classPred == class] <- (class + iter) %% length(classLabels)
+                                    }
+                                    
+                                    mcr <- c(mcr,sum(as.vector(classPred_clone != im_gt))/prod(dim(im_gt)))
+                                  }
+                                  
+                                  # mrfMCR <- sum(as.vector(mrf2dFit$Z_pred != im_gt))/prod(dim(im))
+                                  
+                                  return(tibble(mcr = list(mcr),im = list(im),im_gt = list(im_gt),mrfFit = list(mrf2d_4neighbor)))
+                                })
+```
+
+```{r}
+largeScaleTexture_8neighborhoods <- purrr::map_dfr(1:20,
+                                                   function(imNum){
+                                                     im <- imager::load.image(paste0("~/HMRF-EM-image/images/Grayscale [normal] CL data/tm",imNum,"_1_1.png")) %>%
+                                                       as.matrix()
+                                                     
+                                                     im_gt <- imager::load.image(paste0("~/HMRF-EM-image/images/Grayscale [normal] CL data/gt",imNum,"_1.png")) %>%
+                                                       as.matrix()
+                                                     
+                                                     classLabels <- unique(as.vector(im_gt))
+                                                     
+                                                     #The class lables aren't
+                                                     #0,1,2, etc but instead
+                                                     #start at 0 and increase by
+                                                     #the same decimal amount
+                                                     #per class. For comparison
+                                                     #purposes, we want to make
+                                                     #the classes 0, 1, 2, etc.
+                                                     
+                                                     im_gt[im_gt == 0] <- -1
+                                                     
+                                                     for(class in 1:length(classLabels)){
+                                                       im_gt[im_gt == classLabels[class]] <- class - 1
+                                                     }
+                                                     
+                                                     im_gt[im_gt == -1] <- 0
+                                                     
+                                                     #Consider 8 neighborhood
+                                                     #structure
+                                                     th_8neighbor <- expand_array(-1, family = "onepar", mrfi(1,norm_type = "m"), C = length(classLabels) - 1)
+                                                     
+                                                     mrf2d_8neighbor <- mrf2d::fit_ghm(Y = im,mrfi = mrfi(1,norm_type = "m"),theta = th_8neighbor,equal_vars = TRUE,verbose = FALSE)
+                                                     
+                                                     classPred <- mrf2d_8neighbor$Z_pred
+                                                     
+                                                     mcr <- c()
+                                                     
+                                                     classPred_clone <- classPred
+                                                     
+                                                     for(iter in 1:length(classLabels)){
+                                                       for(class in 1:length(classLabels)){
+                                                         classPred_clone[classPred == class] <- (class + iter) %% length(classLabels)
+                                                       }
+                                                       
+                                                       mcr <- c(mcr,sum(as.vector(classPred_clone != im_gt))/prod(dim(im_gt)))
+                                                     }
+                                                     
+                                                     # mrfMCR <- sum(as.vector(mrf2dFit$Z_pred != im_gt))/prod(dim(im))
+                                                     
+                                                     return(tibble(mcr = list(mcr),im = list(im),im_gt = list(im_gt),mrfFit = list(mrf2d_8neighbor)))
+                                                   })
+```
+
+```{r}
+largeScaleTexture %>%
+  mutate(minMCR = map_dbl(mcr,min)) %>%
+  summarise(mcr = mean(minMCR))
+
+largeScaleTexture_8neighborhoods %>%
+  mutate(minMCR = map_dbl(mcr,min)) %>%
+  summarise(mcr = mean(minMCR))
+
+largeScaleTexture_12neighborhoods %>%
+  mutate(minMCR = map_dbl(mcr,min)) %>%
+  summarise(mcr = mean(minMCR))
+```
+
+
+```{r}
+largeScaleTexture_12neighborhoods <- purrr::map_dfr(1:20,
+                                                   function(imNum){
+                                                     im <- imager::load.image(paste0("~/HMRF-EM-image/images/Grayscale [normal] CL data/tm",imNum,"_1_1.png")) %>%
+                                                       as.matrix()
+                                                     
+                                                     im_gt <- imager::load.image(paste0("~/HMRF-EM-image/images/Grayscale [normal] CL data/gt",imNum,"_1.png")) %>%
+                                                       as.matrix()
+                                                     
+                                                     classLabels <- unique(as.vector(im_gt))
+                                                     
+                                                     #The class lables aren't
+                                                     #0,1,2, etc but instead
+                                                     #start at 0 and increase by
+                                                     #the same decimal amount
+                                                     #per class. For comparison
+                                                     #purposes, we want to make
+                                                     #the classes 0, 1, 2, etc.
+                                                     
+                                                     im_gt[im_gt == 0] <- -1
+                                                     
+                                                     for(class in 1:length(classLabels)){
+                                                       im_gt[im_gt == classLabels[class]] <- class - 1
+                                                     }
+                                                     
+                                                     im_gt[im_gt == -1] <- 0
+                                                     
+                                                     #Consider 8 neighborhood
+                                                     #structure
+                                                     th_8neighbor <- expand_array(-1, family = "onepar", mrfi(2,norm_type = "1"), C = length(classLabels) - 1)
+                                                     
+                                                     mrf2d_8neighbor <- mrf2d::fit_ghm(Y = im,mrfi = mrfi(2,norm_type = "1"),theta = th_8neighbor,equal_vars = TRUE,verbose = FALSE)
+                                                     
+                                                     classPred <- mrf2d_8neighbor$Z_pred
+                                                     
+                                                     mcr <- c()
+                                                     
+                                                     classPred_clone <- classPred
+                                                     
+                                                     for(iter in 0:(length(classLabels) - 1)){
+                                                      
+                                                       classPred_clone <- (classPred_clone + 1) %% length(classLabels)
+                                                       
+                                                       mcr <- c(mcr,sum(as.vector(classPred_clone != im_gt))/prod(dim(im_gt)))
+                                                     }
+                                                     
+                                                     # mrfMCR <- sum(as.vector(mrf2dFit$Z_pred != im_gt))/prod(dim(im))
+                                                     
+                                                     return(tibble(mcr = list(mcr),im = list(im),im_gt = list(im_gt),mrfFit = list(mrf2d_8neighbor)))
+                                                   })
+```
+
+```{r}
+largeScaleTexture_12neighborhoods_classCorrected <- largeScaleTexture_12neighborhoods %>%
+  pmap_dfr(~ {
+    numClasses <- length(unique(as.vector(..3)))
+    
+    predClasses <- ..4$Z_pred
+    mrf <- c()
+    
+    for(class in 0:(numClasses-1)){
+      predClasses <- (predClasses + 1) %% numClasses
+      
+      mrf <- c(mrf,sum(predClasses != ..3)/prod(dim(..3)))
+    }
+    
+    predClasses_corrected <- (..4$Z_pred + (which.min(mrf))) %% numClasses
+    return(tibble(mrf = min(mrf),
+                  predicted = list(predClasses_corrected),
+                  gt = list(..3)))
+  })
+
+largeScaleTexture_8neighborhoods_classCorrected <- largeScaleTexture_8neighborhoods %>%
+  pmap_dfr(~ {
+    numClasses <- length(unique(as.vector(..3)))
+    
+    predClasses <- ..4$Z_pred
+    mrf <- c()
+    
+    for(class in 0:(numClasses-1)){
+      predClasses <- (predClasses + 1) %% numClasses
+      
+      mrf <- c(mrf,sum(predClasses != ..3)/prod(dim(..3)))
+    }
+    
+    predClasses_corrected <- (..4$Z_pred + (which.min(mrf))) %% numClasses
+    return(tibble(mrf = min(mrf),
+                  predicted = list(predClasses_corrected),
+                  gt = list(..3)))
+  })
+
+largeScaleTexture_4neighborhoods_classCorrected <- largeScaleTexture %>%
+  pmap_dfr(~ {
+    numClasses <- length(unique(as.vector(..3)))
+    
+    predClasses <- ..4$Z_pred
+    mrf <- c()
+    
+    for(class in 0:(numClasses-1)){
+      predClasses <- (predClasses + 1) %% numClasses
+      
+      mrf <- c(mrf,sum(predClasses != ..3)/prod(dim(..3)))
+    }
+    
+    predClasses_corrected <- (..4$Z_pred + (which.min(mrf))) %% numClasses
+    return(tibble(mrf = min(mrf),
+                  predicted = list(predClasses_corrected),
+                  gt = list(..3)))
+  })
+
+
+```
+
+```{r}
+original <- imager::load.image(paste0("~/HMRF-EM-image/images/Grayscale [normal] CL data/tm",16,"_1_1.png")) %>%
+  as.matrix() %>%
+  cplot(legend = FALSE) +
+  coord_fixed()
+
+gt <- neighbor4 <- largeScaleTexture_4neighborhoods_classCorrected$gt[[16]] %>%
+  dplot(legend = FALSE) +
+  coord_fixed()
+
+neighbor4 <- largeScaleTexture_4neighborhoods_classCorrected$predicted[[16]] %>%
+  dplot(legend = FALSE) +
+  coord_fixed()
+
+neighbor8 <- largeScaleTexture_8neighborhoods_classCorrected$predicted[[16]] %>%
+  dplot(legend = FALSE) +
+  coord_fixed()
+
+neighbor12 <- largeScaleTexture_12neighborhoods_classCorrected$predicted[[16]] %>%
+  dplot(legend = FALSE) +
+  coord_fixed()
+
+cowplot::plot_grid(original,gt,nrow = 1,labels = c("Original","True Classes"),label_size =  12,
+                   label_x = .05,label_y = .95)
+
+cowplot::plot_grid(neighbor4,neighbor8,neighbor12,nrow = 1,
+                   labels = c("4-neighborhood, MCR = .752","8-neighborhood, MCR = .745","12-neighborhood, MCR = .747"),
+                   label_size = 10,label_y = .8,label_x = -.22)
+```
+
+```{r}
+largeScaleTexture_4neighborhoods_noiseAdded <- purrr::map_dfr(1:20,
+                                function(imNum){
+                                  im <- imager::load.image(paste0("~/HMRF-EM-image/images/Grayscale [normal] CL data/tm",imNum,"_1_1.png")) %>%
+                                    as.matrix()
+                                  
+                                  im <- im + rnorm(prod(dim(im)),sd = .1)
+                                  
+                                  im_gt <- imager::load.image(paste0("~/HMRF-EM-image/images/Grayscale [normal] CL data/gt",imNum,"_1.png")) %>%
+                                    as.matrix()
+                                  
+                                  classLabels <- unique(as.vector(im_gt))
+                                  
+                                  im_gt[im_gt == 0] <- -1
+                                  
+                                  for(class in 1:length(classLabels)){
+                                    im_gt[im_gt == classLabels[class]] <- class - 1
+                                  }
+                                  
+                                  im_gt[im_gt == -1] <- 0
+                                  
+                                  th_4neighbor <- expand_array(-1, family = "onepar", mrfi(1), C = length(classLabels) - 1)
+                                  
+                                  mrf2d_4neighbor <- mrf2d::fit_ghm(Y = im,mrfi = mrfi(1),theta = th_4neighbor,equal_vars = TRUE,verbose = FALSE)
+                                  
+                                  classPred <- mrf2d_4neighbor$Z_pred
+                                  
+                                  mcr <- c()
+                                  
+                                  classPred_clone <- classPred
+                                  
+                                  for(iter in 1:length(classLabels)){
+                                    for(class in 1:length(classLabels)){
+                                      classPred_clone[classPred == class] <- (class + iter) %% length(classLabels)
+                                    }
+                                    
+                                    mcr <- c(mcr,sum(as.vector(classPred_clone != im_gt))/prod(dim(im_gt)))
+                                  }
+                                  
+                                  # mrfMCR <- sum(as.vector(mrf2dFit$Z_pred != im_gt))/prod(dim(im))
+                                  
+                                  return(tibble(mcr = list(mcr),im = list(im),im_gt = list(im_gt),mrfFit = list(mrf2d_4neighbor)))
+                                })
+```
+
+```{r}
+largeScaleTexture_4neighborhoods_noiseAdded %>%
+  mutate(minMCR = map_dbl(mcr,min))
+```
+

@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="" xml:lang="">
+  <head>
+    <title>Hidden Markov Random Field Models for Image Texture Segmentation</title>
+    <meta charset="utf-8" />
+    <meta name="author" content="Joe Zemmels" />
+    <meta name="date" content="2020-11-19" />
+    <script src="libs/header-attrs/header-attrs.js"></script>
+    <link href="libs/remark-css/default.css" rel="stylesheet" />
+    <link href="libs/remark-css/default-fonts.css" rel="stylesheet" />
+  </head>
+  <body>
+    <textarea id="source">
+class: center, middle, inverse, title-slide
+
+# Hidden Markov Random Field Models for Image Texture Segmentation
+## STAT 590 Presentation
+### Joe Zemmels
+### 11/19/20
+
+---
+
+
+
+
+
+
+# Outline
+
+- Introduction
+
+- Hidden Markov Random Field Model
+ 
+ - Finite Normal Mixture Model
+ 
+ - Markov Random Field Model
+ 
+ - Hidden Markov Random Field Model
+
+- Model Fitting
+
+- Simulations &amp; Examples
+
+---
+class: inverse, center, middle
+
+# Introduction
+
+---
+
+# Motivation
+
+- *Texture*: image feature that quantifies the spatial arrangement of pixel intensities.
+
+- *Texture segmentation*: process of classifying regions in an image with common textures.
+
+  - Often a critical first step of an image processing procedure.
+
+.pull-left[
+&lt;img src="images/zebraSegmentation.jpg" width="333" /&gt;
+]
+.pull-right[
+&lt;img src="images/houseSegmentation.png" width="385" /&gt;
+]
+
+---
+class: inverse, middle, center
+
+# Hidden Markov Random Field Model
+
+---
+
+# Finite Normal Mixture Model
+
+Suppose a random variable `\(Y\)` has density
+
+$$
+f(y) = \sum_{g=1}^G \pi_g f(y ; \mu_g, \sigma_g^2)
+$$
+
+where `\(\pi_g \in (0,1), \sum_{g=1}^G \pi_g = 1\)`, and `\(f(y;\mu_g, \sigma_g^2)\)` is `\(N(\mu_g, \sigma_g^2)\)` density.
+
+--
+
+This can be explained by introducing a latent variable `\(Z \in \{1,...,G\}\)` such that
+
+$$
+f(y) = \sum_{g=1}^G P(Z = g) f(y | Z = g).
+$$
+
+--
+
+Then for `\(i = 1,...,n\)`, the joint density of `\((z_i, y_i)\)`, is
+
+$$
+\prod_{g = 1}^G \left\[\pi_g f(y_i | z_i = g)\right\]^{I(z_i = g)}.
+$$
+
+---
+# FNM Model Discussion
+
+- Estimation of `\(\{(\mu_g, \sigma_g^2, \pi_g) : g = 1,...,G\}\)` by EM algorithm is relatively straightforward for FNM model.
+
+- Can behave as if `\(P(Z_i = g)\)` is the probability that pixel `\(i\)` is of texture `\(g\)`.
+
+ - Then assume observed pixel intensity `\(Y_i | Z_i = g\)` is `\(N(\mu_g, \sigma_g^2)\)`.
+
+--
+
+- **Problem:** we assume `\((Z_i, Y_i)\)` independent of `\((Z_j, Y_j)\)` for `\(i \neq j\)`.
+
+ - A pixel's texture label *should be* related to that of its neighbors.
+ 
+ - Basic FNM model does not capture desired local pixel associations.
+ 
+ - Will assume a conditional structure on `\(P(Z_i = g)\)`.
+
+---
+
+# Random Fields &amp; Neighborhoods
+
+- Let `\(\mathcal{S} = \{1,...,n\}\)`.
+
+- A collection of random variables `\(\pmb{R} = \{R_i : i \in \mathcal{S}\}\)` is called a (discrete index) *random field*.
+
+ - `\(i\)` refers to a "site" of the random field.
+
+--
+
+- `\(N_i \subset \mathcal{S}\)` is a *neighborhood* of site `\(i\)` if
+
+ 1. `\(i \not\in N_i\)`
+ 
+ 2. `\(i \in N_j \iff j \in N_i\)`
+
+
+&lt;img src="images/neighborhoodSizes.jpg" width="400" style="display: block; margin: auto;" /&gt;
+
+---
+# Markov Random Fields
+
+
+- A random field `\(\pmb{R}\)` is a *Markov Random Field* with respect to `\(\mathcal{N} = \{N_i : i \in \mathcal{S}\}\)` if
+
+ 1. `\(P(\pmb{R} = \pmb{r}) &gt; 0, \forall \pmb{r} \in \mathcal{R}\)` where `\(\mathcal{R}\)` is state space of `\(\pmb{R}\)`
+ 
+ 2. `\(P(R_i = r_i| R_{\mathcal{S} \setminus i}) = P(R_i = r_i| R_{N_i})\)`
+
+`\(\hspace{.35in}\)` where `\(R_{\mathcal{S} \setminus i} \equiv \{R_j : j \in \mathcal{S}, j \neq i\}\)` and `\(R_{N_i} \equiv \{R_j : j \in N_i\}\)`.
+
+--
+
+- We will model texture labels as a MRF.
+
+ - Assume that each pixel is described by one of a finite set of textures.
+
+---
+# Distribution of MRF
+
+- **Hammersly-Clifford (1971)**: any MRF `\(\pmb{R}\)` can be characterized by a Gibbs distribution with appropriately-defined energy function (and vice-versa). 
+
+- `\(R_i\)` following a Gibbs distribution means for some *energy function* `\(U\)`,
+
+`$$P\left(\pmb{R} = \pmb{r}\right) \propto \exp\left[-U(\pmb{r})\right]$$`
+
+--
+
+- In statistical mechanics, `\(U\)` describes the energy in configuration `\(\pmb{r}\)` of `\(\pmb{R}\)`.
+
+- For our purposes, `\(U\)` will penalize neighboring pixels with different texture labels.
+
+---
+# Energy Function Assumptions
+
+- Define a *clique* `\(c \subset \mathcal{S}\)` such that `\(i,j \in c, i \neq j \implies i\)` and `\(j\)` are neighbors.
+
+ - E.g., maximum clique size of 2 for 4-neighborhood structure.
+
+- Define `\(\mathcal{C}\)` to be set of all possible cliques.
+
+--
+
+- Assume `\(U(\pmb{r})\)` has the form
+
+$$
+U(\pmb{r}) = \sum_{c \in \mathcal{C}} V_c(\pmb{r}).
+$$
+
+- `\(V_c(\pmb{r})\)` is a *clique potential*.
+
+ - Reduces to `\(V_c(r_i,r_j)\)`, `\(i,j \in \mathcal{S}\)`, for 4-neighbor structure.
+
+ - E.g., `\(V_c(r_i, r_j) = \alpha I(r_i \neq r_j)\)` for `\(\alpha &gt; 0\)`.
+
+---
+# Hidden MRF Model - Zhang et al. (2001)
+
+Model assumptions are:
+
+1. Texture labels `\(\pmb{Z} = \{Z_i : i \in \mathcal{S}\}\)` are "Hidden" MRF with finite state space `\(\mathcal{G}\)`.
+
+--
+
+2. Observed pixel intensities `\(\pmb{Y} = \{Y_i : i \in \mathcal{S}\}\)` are random field with finite state space `\(\mathcal{Y}\)`
+
+ - Assume conditional distribution of `\(Y_i | Z_i = g\)` has density `\(f(y_i ; \pmb{\theta}_{g})\)` of known functional form with parameters `\(\pmb{\theta}_{g}\)`.
+
+--
+
+3. Assume `\(\pmb{Y}\)` are conditionally independent given `\(\pmb{Z} = \pmb{g}\)` meaning
+
+$$
+f(\pmb{y} | \pmb{z}) = \prod_{i \in \mathcal{S}} f(y_i ; \pmb{\theta}_g).
+$$
+
+Then the joint density is given by
+
+$$
+f(\pmb{y}, \pmb{z}) = P(\pmb{Z} = \pmb{g}) \prod_{i \in \mathcal{S}} f(y_i | \pmb{\theta}_g).
+$$
+
+---
+# Hidden MRF Model - Zhang et al. (2001)
+
+- Note that for `\(i \in \mathcal{S}\)`, we can express the conditional density of `\(y_i\)` given the neighbors of `\(z_i\)` as
+
+`$$f(y_i | z_{N_i};\pmb{\theta}) = \sum_{g=1}^G f(y_i ; \pmb{\theta}_g) P(Z_i = g | z_{N_i}).$$`
+- This is referred to as the Hidden Markov Random Field model.
+
+&lt;img src="images/mrf_diagram.jpg" width="175" style="display: block; margin: auto;" /&gt;
+
+--
+
+- Assuming `\(f(y_i;\pmb{\theta}_g)\)` Normal, `\(\pmb{\theta}_g\)` is estimated similar to FNM model EM estimation.
+
+- `\(P(Z_i = g | \{z_j : j \in N_i\})\)` requires alternative estimation.
+
+---
+class: inverse, middle, center
+
+# Model Fitting
+
+---
+
+# EM Algorithm
+
+E-Step involves computing
+
+$$
+Q\left(\pmb{\theta} | \pmb{\theta}^{(t)}\right) = \sum_{\pmb{g} \in \mathcal{G}} \log\left(f\left(\pmb{y}, \pmb{g} ; \pmb{\theta}^{(t)}\right)\right) P\left(\pmb{g} | \pmb{y};\pmb{\theta}^{(t)}\right).
+$$
+
+--
+
+The M-step results in
+
+`$$\mu_g^{(t+1)} = \frac{\sum_{i \in \mathcal{S}} P(Z_i = g  | * ) y_i}{\sum_{i \in \mathcal{S}} P(Z_i = g | *)}$$`
+`$$\sigma_g^{2^{(t+1)}} = \frac{\sum_{i \in \mathcal{S}} P(Z_i = g | *)\left(y_i - \mu_g^{(t)}\right)^2}{\sum_{i \in \mathcal{S}} P(Z_i = g |*)}$$`
+
+where `\(P(Z_i = g | *)\)` is short for
+
+`$$P(Z_i = g | y_i, z_{N_i}; \pmb{\theta}^{(t)}) = \frac{f\left(y_i ; \pmb{\theta}_g^{(t)}\right) P(Z_i = g | z_{N_i})}{\sum_{g=1}^G f\left(y_i ; \pmb{\theta}_g^{(t)}\right) P(Z_i = g | z_{N_i})}.$$`
+
+---
+
+# Class Label MAP Estimation
+
+- `\(P(Z_i = g | z_{N_i})\)` requires estimation of class labels based on `\(\pmb{\theta}^{(t)}\)`.
+
+- Zhang et  al. (2001), by way of Besag (1986), use maximum a posteriori (MAP) estimation:
+
+`$$\hat{\pmb{g}} = \arg \max_{\pmb{g} \in \mathcal{G}} P(\pmb{Z} = \pmb{g} | \pmb{y}) = \arg\max_{\pmb{g} \in \mathcal{G}} f(\pmb{y} | \pmb{g}) P(\pmb{Z} = \pmb{g}).$$`
+
+--
+
+- `\(f(\pmb{y} | \pmb{g})\)` is joint normal likelihood and `\(P(\pmb{Z} = \pmb{g})\)` is a Gibbs distribution.
+
+- The optimization problem reduces to:
+
+`$$\hat{\pmb{g}} = \arg \min_{\pmb{g} \in \mathcal{G}} \left(\sum_{i \in \mathcal{S}} \left[\frac{(y_i - \mu_{z_i})^2}{2 \sigma_{z_i}^2} + \log(\sigma_{z_i})\right] + U(\pmb{g})\right).$$`
+
+--
+
+- Assume `\(V_c(z_i, z_j) = \frac{1}{2} I(z_i \neq z_j)\)` (Potts Model).
+
+- Use an Iterated Conditional Modes algorithm to find `\(\hat{\pmb{g}}\)`.
+
+---
+class: inverse, middle, center
+
+# Simulations &amp; Examples
+
+---
+# Simulation Study #1
+
+- Vary number of classes, observed noise, neighborhood size.
+
+- Use misclassification rate (proportion of misclassified pixels) as diagnostic.
+
+- Simulate 100 images from MRF of size 100x100 for each \# of classes, noise, and neighborhood size combination.
+
+---
+## Simulation Study #1: 4-Neighborhood Examples
+
+&lt;img src="590presentationSlides_files/figure-html/unnamed-chunk-5-1.png" style="display: block; margin: auto;" /&gt;
+
+---
+#Simulation Study #1 Results
+
+.pull-left[
+&lt;img src="images/simulation1_4neighbor_mcrTable.PNG" width="937" /&gt;
+]
+
+.pull-right[
+&lt;img src="images/simulation1_8neighbor_mcrTable.PNG" width="936" /&gt;
+]
+
+General takeaways:
+
+ - MCR increases as number of classes and noise increases.
+ 
+ - 8-neighborhood structure tends to have better MCR than 4-neighborhood.
+  
+  - 8-neighborhood promotes larger-scale homogeneity.
+
+---
+
+# Simulation Study #2
+
+- Consider 20 synthesized images of larger-scale textures.
+
+&lt;img src="images/largeScaleTextureExample.png" width="50%" style="display: block; margin: auto;" /&gt;
+
+&lt;img src="images/largeScaleTextureExampleClassifs.png" width="80%" style="display: block; margin: auto;" /&gt;
+
+---
+# Simulation Study #2 Results
+
+&lt;img src="images/simulation2_mcrTable.png" width="30%" style="display: block; margin: auto;" /&gt;
+
+General Takeaways:
+ - Local neighborhood structure does not identify large-scale texture well.
+  - Common practice in image processing is to consolidate class estimates from multiple resolutions.
+ 
+ - A more thorough analysis is warranted, including obviously a larger sample size and more diverse neighborhood systems.
+
+---
+# Conclusions &amp; Extensions
+
+- Extremely-"localized" neighborhood structure is inefficient at identifying large-scale texture.
+
+- Apparent sensitivity to initial conditions used.
+
+- ICM algorithm is can be numerically unstable.
+
+To explore:
+
+- Multi-resolution MRFs to handle larger-scale texture.
+
+- More effective/robust estimators of class label probabilities.
+
+&lt;!-- - "Fuzzy" texture classification using HMRF --&gt;
+
+- Model-based image filter design.
+
+---
+
+class: middle, center
+
+# Questions?
+
+---
+
+class: middle, center
+
+# Thank You!
+
+---
+
+#References 
+
+Besag, J. (1986). "On the Statistical Analysis of Dirty Pictures". In:
+_Journal of the Royal Statistical Society: Series B (Methodological)_
+48.3, pp. 259-279. DOI:
+[https://doi.org/10.1111/j.2517-6161.1986.tb01412.x](https://doi.org/https%3A%2F%2Fdoi.org%2F10.1111%2Fj.2517-6161.1986.tb01412.x).
+eprint:
+https://rss.onlinelibrary.wiley.com/doi/pdf/10.1111/j.2517-6161.1986.tb01412.x.
+
+Freguglia, V. et al. (2020). _Inference tools for Markov Random Fields
+on lattices: The R package mrf2d_. arXiv: 2006.00383 [stat.CO].
+
+Hammersly, J. et al. (1971). "Markov Fields on Finite Graphs and
+Lattices".
+
+Li, S. (2001). _Markov Random Field Modeling in Image Analysis_. DOI:
+[10.1007/978-1-84800-279-1](https://doi.org/10.1007%2F978-1-84800-279-1).
+
+Wang, Q. (2012). "HMRF-EM-image: Implementation of the Hidden Markov
+Random Field Model and its Expectation-Maximization Algorithm". In:
+_CoRR_ abs/1207.3510. eprint: 1207.3510.
+
+Zhang, Y. et al. (2001). "Segmentation of brain MR images through a
+hidden Markov random field model and the expectation-maximization
+algorithm". In: _IEEE Transactions on Medical Imaging_ 20.1, pp. 45-57.
+DOI: [10.1109/42.906424](https://doi.org/10.1109%2F42.906424).
+
+---
+## Appendix: MRF Simulated Image Outliers
+
+&lt;img src="images/misClassifiedExamples.png" width="933" style="display: block; margin: auto;" /&gt;
+
+---
+# Appendix: Eiffel Tower
+
+&lt;img src="590presentationSlides_files/figure-html/unnamed-chunk-12-1.png" width="600" style="display: block; margin: auto;" /&gt;
+
+---
+## Appendix: Cartridge Case Primer Scans
+
+&lt;img src="images/cartridgeCasePrimer.jpg" width="200" style="display: block; margin: auto;" /&gt;
+
+
+&lt;img src="images/cartridgeCase_hmrf.png" width="923" /&gt;
+    </textarea>
+<style data-target="print-only">@media screen {.remark-slide-container{display:block;}.remark-slide-scaler{box-shadow:none;}}</style>
+<script src="https://remarkjs.com/downloads/remark-latest.min.js"></script>
+<script>var slideshow = remark.create({
+"highlightStyle": "github",
+"highlightLines": true,
+"countIncrementalSlides": false
+});
+if (window.HTMLWidgets) slideshow.on('afterShowSlide', function (slide) {
+  window.dispatchEvent(new Event('resize'));
+});
+(function(d) {
+  var s = d.createElement("style"), r = d.querySelector(".remark-slide-scaler");
+  if (!r) return;
+  s.type = "text/css"; s.innerHTML = "@page {size: " + r.style.width + " " + r.style.height +"; }";
+  d.head.appendChild(s);
+})(document);
+
+(function(d) {
+  var el = d.getElementsByClassName("remark-slides-area");
+  if (!el) return;
+  var slide, slides = slideshow.getSlides(), els = el[0].children;
+  for (var i = 1; i < slides.length; i++) {
+    slide = slides[i];
+    if (slide.properties.continued === "true" || slide.properties.count === "false") {
+      els[i - 1].className += ' has-continuation';
+    }
+  }
+  var s = d.createElement("style");
+  s.type = "text/css"; s.innerHTML = "@media print { .has-continuation { display: none; } }";
+  d.head.appendChild(s);
+})(document);
+// delete the temporary CSS (for displaying all slides initially) when the user
+// starts to view slides
+(function() {
+  var deleted = false;
+  slideshow.on('beforeShowSlide', function(slide) {
+    if (deleted) return;
+    var sheets = document.styleSheets, node;
+    for (var i = 0; i < sheets.length; i++) {
+      node = sheets[i].ownerNode;
+      if (node.dataset["target"] !== "print-only") continue;
+      node.parentNode.removeChild(node);
+    }
+    deleted = true;
+  });
+})();
+(function() {
+  "use strict"
+  // Replace <script> tags in slides area to make them executable
+  var scripts = document.querySelectorAll(
+    '.remark-slides-area .remark-slide-container script'
+  );
+  if (!scripts.length) return;
+  for (var i = 0; i < scripts.length; i++) {
+    var s = document.createElement('script');
+    var code = document.createTextNode(scripts[i].textContent);
+    s.appendChild(code);
+    var scriptAttrs = scripts[i].attributes;
+    for (var j = 0; j < scriptAttrs.length; j++) {
+      s.setAttribute(scriptAttrs[j].name, scriptAttrs[j].value);
+    }
+    scripts[i].parentElement.replaceChild(s, scripts[i]);
+  }
+})();
+(function() {
+  var links = document.getElementsByTagName('a');
+  for (var i = 0; i < links.length; i++) {
+    if (/^(https?:)?\/\//.test(links[i].getAttribute('href'))) {
+      links[i].target = '_blank';
+    }
+  }
+})();
+// adds .remark-code-has-line-highlighted class to <pre> parent elements
+// of code chunks containing highlighted lines with class .remark-code-line-highlighted
+(function(d) {
+  const hlines = d.querySelectorAll('.remark-code-line-highlighted');
+  const preParents = [];
+  const findPreParent = function(line, p = 0) {
+    if (p > 1) return null; // traverse up no further than grandparent
+    const el = line.parentElement;
+    return el.tagName === "PRE" ? el : findPreParent(el, ++p);
+  };
+
+  for (let line of hlines) {
+    let pre = findPreParent(line);
+    if (pre && !preParents.includes(pre)) preParents.push(pre);
+  }
+  preParents.forEach(p => p.classList.add("remark-code-has-line-highlighted"));
+})(document);</script>
+
+<script>
+slideshow._releaseMath = function(el) {
+  var i, text, code, codes = el.getElementsByTagName('code');
+  for (i = 0; i < codes.length;) {
+    code = codes[i];
+    if (code.parentNode.tagName !== 'PRE' && code.childElementCount === 0) {
+      text = code.textContent;
+      if (/^\\\((.|\s)+\\\)$/.test(text) || /^\\\[(.|\s)+\\\]$/.test(text) ||
+          /^\$\$(.|\s)+\$\$$/.test(text) ||
+          /^\\begin\{([^}]+)\}(.|\s)+\\end\{[^}]+\}$/.test(text)) {
+        code.outerHTML = code.innerHTML;  // remove <code></code>
+        continue;
+      }
+    }
+    i++;
+  }
+};
+slideshow._releaseMath(document);
+</script>
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+(function () {
+  var script = document.createElement('script');
+  script.type = 'text/javascript';
+  script.src  = 'https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-MML-AM_CHTML';
+  if (location.protocol !== 'file:' && /^https?:/.test(script.src))
+    script.src  = script.src.replace(/^https?:/, '');
+  document.getElementsByTagName('head')[0].appendChild(script);
+})();
+</script>
+  </body>
+</html>
