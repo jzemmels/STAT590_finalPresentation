@@ -12,6 +12,20 @@ output:
       countIncrementalSlides: false
 ---
 
+<!-- Copy and paste the following into within <head> ... </head> to make it renderable on github pages: -->
+
+<!-- <script type="text/x-mathjax-config"> MathJax.Hub.Config({ TeX: { equationNumbers: { autoNumber: "all" } } }); </script> -->
+<!--        <script type="text/x-mathjax-config"> -->
+<!--          MathJax.Hub.Config({ -->
+<!--            tex2jax: { -->
+<!--              inlineMath: [ ['$','$'], ["\\(","\\)"] ], -->
+<!--              processEscapes: true -->
+<!--            } -->
+<!--          }); -->
+<!--        </script> -->
+<!--        <script src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML" type="text/javascript"></script> -->
+<!--        </head> -->
+
 ```{r setup, include=FALSE}
 options(htmltools.dir.version = FALSE)
 set.seed(11242020)
@@ -441,9 +455,15 @@ RefManageR::PrintBibliography(myBib)
 ```
 
 ---
-## Appendix: MRF Simulated Image Outliers
+### Appendix: MRF Simulated Image Outliers
 
-```{r,fig.align="center",echo=FALSE}
+- Slide 20: average MCR of 8-neighborhood, .1 s.d., 3 and 4 class images is larger than that of the 4-neighborhood images.
+
+- Due to "outlier" images generated under the 8-neighborhood MRF associated MCR is magnitudes larger than "typical" image's
+
+- Perhaps because there is a very large region of pixels with the same texture that touch multiple sides of these images?
+
+```{r,fig.align="center",echo=FALSE,out.width="75%"}
 knitr::include_graphics(c("images/misClassifiedExamples.png"))
 ```
 

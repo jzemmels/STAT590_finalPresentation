@@ -18,6 +18,7 @@
          });
        </script>
        <script src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML" type="text/javascript"></script>
+       </head>
   </head>
   <body>
     <textarea id="source">
@@ -312,7 +313,7 @@ class: inverse, middle, center
 ---
 ## Simulation Study #1: 4-Neighborhood Examples
 
-&lt;img src="STAT590_finalPresentation_files/figure-html/unnamed-chunk-5-1.png" style="display: block; margin: auto;" /&gt;
+&lt;img src="STAT590_finalPresentation_files/figure-html/unnamed-chunk-6-1.png" style="display: block; margin: auto;" /&gt;
 
 ---
 #Simulation Study #1 Results
@@ -389,40 +390,41 @@ class: middle, center
 
 #References
 
-Besag, J. (1986). "On the Statistical Analysis of Dirty Pictures". In:
-_Journal of the Royal Statistical Society: Series B (Methodological)_
-48.3, pp. 259-279. DOI:
+Besag, J. (1986). "On the Statistical Analysis of Dirty Pictures". In: _Journal of the Royal Statistical Society: Series B
+(Methodological)_ 48.3, pp. 259-279. DOI:
 [https://doi.org/10.1111/j.2517-6161.1986.tb01412.x](https://doi.org/https%3A%2F%2Fdoi.org%2F10.1111%2Fj.2517-6161.1986.tb01412.x).
-eprint:
-https://rss.onlinelibrary.wiley.com/doi/pdf/10.1111/j.2517-6161.1986.tb01412.x.
+eprint: https://rss.onlinelibrary.wiley.com/doi/pdf/10.1111/j.2517-6161.1986.tb01412.x.
 
-Freguglia, V. et al. (2020). _Inference tools for Markov Random Fields
-on lattices: The R package mrf2d_. arXiv: 2006.00383 [stat.CO].
+Freguglia, V. et al. (2020). _Inference tools for Markov Random Fields on lattices: The R package mrf2d_. arXiv: 2006.00383
+[stat.CO].
 
-Hammersly, J. et al. (1971). "Markov Fields on Finite Graphs and
-Lattices".
+Hammersly, J. et al. (1971). "Markov Fields on Finite Graphs and Lattices".
 
 Li, S. (2001). _Markov Random Field Modeling in Image Analysis_. DOI:
 [10.1007/978-1-84800-279-1](https://doi.org/10.1007%2F978-1-84800-279-1).
 
-Wang, Q. (2012). "HMRF-EM-image: Implementation of the Hidden Markov
-Random Field Model and its Expectation-Maximization Algorithm". In:
-_CoRR_ abs/1207.3510. eprint: 1207.3510.
+Wang, Q. (2012). "HMRF-EM-image: Implementation of the Hidden Markov Random Field Model and its Expectation-Maximization
+Algorithm". In: _CoRR_ abs/1207.3510. eprint: 1207.3510.
 
-Zhang, Y. et al. (2001). "Segmentation of brain MR images through a
-hidden Markov random field model and the expectation-maximization
-algorithm". In: _IEEE Transactions on Medical Imaging_ 20.1, pp. 45-57.
-DOI: [10.1109/42.906424](https://doi.org/10.1109%2F42.906424).
+Zhang, Y. et al. (2001). "Segmentation of brain MR images through a hidden Markov random field model and the
+expectation-maximization algorithm". In: _IEEE Transactions on Medical Imaging_ 20.1, pp. 45-57. DOI:
+[10.1109/42.906424](https://doi.org/10.1109%2F42.906424).
 
 ---
-## Appendix: MRF Simulated Image Outliers
+### Appendix: MRF Simulated Image Outliers
 
-&lt;img src="images/misClassifiedExamples.png" width="933" style="display: block; margin: auto;" /&gt;
+- Slide 20: average MCR of 8-neighborhood, .1 s.d., 3 and 4 class images is larger than that of the 4-neighborhood images.
+
+- Due to "outlier" images generated under the 8-neighborhood MRF associated MCR is magnitudes larger than "typical" image's
+
+- Perhaps because there is a very large region of pixels with the same texture that touch multiple sides of these images?
+
+&lt;img src="images/misClassifiedExamples.png" width="75%" style="display: block; margin: auto;" /&gt;
 
 ---
 # Appendix: Eiffel Tower
 
-&lt;img src="STAT590_finalPresentation_files/figure-html/unnamed-chunk-12-1.png" width="600" style="display: block; margin: auto;" /&gt;
+&lt;img src="STAT590_finalPresentation_files/figure-html/unnamed-chunk-13-1.png" width="600" style="display: block; margin: auto;" /&gt;
 
 ---
 ## Appendix: Cartridge Case Primer Scans
